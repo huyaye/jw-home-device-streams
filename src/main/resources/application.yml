@@ -1,0 +1,23 @@
+server:
+  port: 9095
+spring:
+  application:
+    name: device-streams
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:29091,localhost:29092}
+    topics:
+      device-state: jwhome.dev.event.device.json
+    streams:
+      app:
+        id: jwhome-device-streams-app
+        server: ${STREAMS_APP_SERVER:localhost:9095}
+      state-stores:
+        device-state: device-state-store
+eureka:
+  instance:
+    hostname: device-streams
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    service-url:
+      defaultZone: ${EUREKA_SERVER_ADDRESS:http://127.0.0.1:8761/eureka}
