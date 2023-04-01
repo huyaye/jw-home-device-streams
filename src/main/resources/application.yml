@@ -13,6 +13,9 @@ spring:
         server: ${STREAMS_APP_SERVER:localhost:9095}
       state-stores:
         device-state: device-state-store
+  rsocket:
+    server:
+      port: 9095
 eureka:
   instance:
     hostname: device-streams

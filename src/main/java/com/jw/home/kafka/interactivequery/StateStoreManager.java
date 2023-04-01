@@ -1,9 +1,9 @@
 package com.jw.home.kafka.interactivequery;
 
-import com.jw.home.client.StreamsAPICaller;
 import com.jw.home.dto.DeviceState;
 import com.jw.home.exception.NotFoundDeviceException;
 import com.jw.home.exception.SystemException;
+import com.jw.home.rsocket.client.RSocketClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.streams.KafkaStreams;
@@ -15,6 +15,7 @@ import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.config.StreamsBuilderFactoryBean;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 import java.util.Set;
 
@@ -30,41 +31,35 @@ public class StateStoreManager {
     private String hostInfo;
 
     private final StreamsBuilderFactoryBean factoryBean;
-    private final StreamsAPICaller streamsAPICaller;
+    private final RSocketClient streamsCaller;
 
-    public DeviceState getDeviceState(String deviceId) {
+    public Mono<DeviceState> getDeviceState(String deviceId) {
         KafkaStreams kafkaStreams = factoryBean.getKafkaStreams();
         KeyQueryMetadata queryMetadata = kafkaStreams.queryMetadataForKey(stateStoreName, deviceId, String().serializer()); // TODO KIP-562
         if (queryMetadata == null) {
             log.warn("queryMetadata is null.");
-            throw SystemException.INSTANCE;
+            return Mono.error(SystemException.INSTANCE);
         }
-        DeviceState deviceState = null;
         if (isAlive(queryMetadata.activeHost())) {
-            deviceState = query(deviceId, kafkaStreams, queryMetadata.activeHost(), queryMetadata.partition());
+            return query(deviceId, kafkaStreams, queryMetadata.activeHost(), queryMetadata.partition());
         } else {
             Set<HostInfo> standbyHosts = queryMetadata.standbyHosts();
             for (HostInfo standbyHost : standbyHosts) { // TODO Filter acceptable offset lag, sort by smallest lag
-                deviceState = query(deviceId, kafkaStreams, standbyHost, queryMetadata.partition());
-                if (deviceState != null) {
-                    break;
-                }
+                return query(deviceId, kafkaStreams, standbyHost, queryMetadata.partition());
             }
         }
-        if (deviceState == null) {
-            throw NotFoundDeviceException.INSTANCE;
-        }
-        return deviceState;
+        return Mono.error(SystemException.INSTANCE);
     }
 
-    private DeviceState query(String deviceId, KafkaStreams kafkaStreams, HostInfo hostInfo, int partition) {
+    private Mono<DeviceState> query(String deviceId, KafkaStreams kafkaStreams, HostInfo hostInfo, int partition) {
         ReadOnlyKeyValueStore<String, DeviceState> stateStore =
                 kafkaStreams.store(StoreQueryParameters.<ReadOnlyKeyValueStore<String, DeviceState>>fromNameAndType(stateStoreName, QueryableStoreTypes.keyValueStore())
                         .enableStaleStores().withPartition(partition));
         if (isLocalHost(hostInfo)) {
-            return stateStore.get(deviceId);
+            DeviceState deviceState = stateStore.get(deviceId);
+            return deviceState != null ? Mono.just(deviceState) : Mono.error(NotFoundDeviceException.INSTANCE);
         } else {
-            return streamsAPICaller.getDeviceState(hostInfo.host(), hostInfo.port(), deviceId);
+            return streamsCaller.getDeviceState(hostInfo.host(), hostInfo.port(), deviceId);
         }
     }
 
